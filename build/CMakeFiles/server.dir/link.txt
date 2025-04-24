@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--enable-auto-import CMakeFiles/server.dir/src/wserver.c.o CMakeFiles/server.dir/src/io_helper.c.o CMakeFiles/server.dir/src/request.c.o -o server.exe -Wl,--out-implib,libserver.dll.a -Wl,--major-image-version,0,--minor-image-version,0 

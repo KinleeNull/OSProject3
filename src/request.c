@@ -7,6 +7,39 @@
 //
 //	TODO: add code to create and manage the buffer
 //
+int buffer[MAXBUF];
+int front = 0, rear = 0, count = 0; // front is where we remove from, rear is where we insert, and count tracks how many items are in the buffer
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; 
+pthread_cond_t cond_nonempty = PTHREAD_COND_INITIALIZER; // Used to wait until there's something in buffer
+pthread_cond_t cond_nonfull = PTHREAD_COND_INITIALIZER; // Used to wait if the buffer is full
+
+void buffer_insert(int connfd) {
+	pthread_mutex_lock(&mutex);
+	while (count == MAXBUF) 
+		pthread_cond_wait(&cond_nonfull, &mutex); // Wait if buffer is full
+
+	buffer[rear] = connfd;
+	rear = (rear + 1) % MAXBUF;
+	count++;
+
+	pthread_cond_signal(&cond_nonempty); // Notifies if something is available in buffer
+	pthread_mutex_unlock(&mutex);
+}
+
+int buffer_remove() {
+	pthread_mutex_lock(&mutex);
+	while (count == 0)
+		pthread_cond_wait(&cond_nonempty, &mutex); // Wait if buffer is empty
+
+	int connfd = buffer[front];
+	front = (front + 1) % MAXBUF;
+	count--;
+
+	pthread_cond_signal(&cond_nonfull); // Notifies if there is space in buffer
+	pthread_mutex_unlock(&mutex);
+	return connfd;
+}
 
 //
 // Sends out HTTP response in case of errors

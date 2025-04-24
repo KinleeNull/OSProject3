@@ -1,0 +1,4 @@
+/home/kinnu/OSProj3/build/CMakeFiles/server.dir
+/home/kinnu/OSProj3/build/CMakeFiles/client.dir
+/home/kinnu/OSProj3/build/CMakeFiles/edit_cache.dir
+/home/kinnu/OSProj3/build/CMakeFiles/rebuild_cache.dir
