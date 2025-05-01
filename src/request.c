@@ -1,44 +1,50 @@
 #include "io_helper.h"
 #include "request.h"
+#include <pthread.h>
 
 #define MAXBUF (8192)
+#define BUFFER_SIZE DEFAULT_BUFFER_SIZE
+#define INITIAL_POLICY DEFAULT_SCHED_ALGO
 
 
 //
 //	TODO: add code to create and manage the buffer
 //
-int buffer[MAXBUF];
-int front = 0, rear = 0, count = 0; // front is where we remove from, rear is where we insert, and count tracks how many items are in the buffer
 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER; 
-pthread_cond_t cond_nonempty = PTHREAD_COND_INITIALIZER; // Used to wait until there's something in buffer
-pthread_cond_t cond_nonfull = PTHREAD_COND_INITIALIZER; // Used to wait if the buffer is full
+// Make a structure for the requests
+typedef struct {
+	int fd;
+	int filesize;
+	char filename[MAXBUF];
+} request;
 
-void buffer_insert(int connfd) {
-	pthread_mutex_lock(&mutex);
-	while (count == MAXBUF) 
-		pthread_cond_wait(&cond_nonfull, &mutex); // Wait if buffer is full
+// Set schedule names to their numbers
+typedef enum {
+	FIFO = 0,
+	SFF = 1,
+	RANDOM = 2
+} sched_policy;
 
-	buffer[rear] = connfd;
-	rear = (rear + 1) % MAXBUF;
-	count++;
+sched_policy current_policy;
 
-	pthread_cond_signal(&cond_nonempty); // Notifies if something is available in buffer
-	pthread_mutex_unlock(&mutex);
-}
+// Make a structure for request buffers
+typedef struct {
+	request buffer[BUFFER_SIZE];
+	int count;
+	pthread_mutex_t lock;
+	pthread_cond_t not_empty;
+	pthread_cond_t not_full;
+} request_buffer;
 
-int buffer_remove() {
-	pthread_mutex_lock(&mutex);
-	while (count == 0)
-		pthread_cond_wait(&cond_nonempty, &mutex); // Wait if buffer is empty
+request_buffer request_buf;
 
-	int connfd = buffer[front];
-	front = (front + 1) % MAXBUF;
-	count--;
-
-	pthread_cond_signal(&cond_nonfull); // Notifies if there is space in buffer
-	pthread_mutex_unlock(&mutex);
-	return connfd;
+// Initialize the buffer
+void buffer_init() {
+                current_policy = (sched_policy)INITIAL_POLICY;
+                request_buf.count = 0;
+                pthread_mutex_init(&request_buf.lock, NULL);
+                pthread_cond_init(&request_buf.not_empty, NULL);
+                pthread_cond_init(&request_buf.not_full, NULL);
 }
 
 //
@@ -167,6 +173,7 @@ void request_serve_static(int fd, char *filename, int filesize) {
 //
 void* thread_request_serve_static(void* arg)
 {
+
 	// TODO: write code to actualy respond to HTTP requests
 }
 
@@ -208,6 +215,23 @@ void request_handle(int fd) {
 		}
 		
 		// TODO: write code to add HTTP requests in the buffer based on the scheduling policy
+
+		pthread_mutex_lock(&request_buf.lock);
+
+		// Wait if the buffer is full
+		while (request_buf.count == BUFFER_SIZE) {
+			pthread_cond_wait(&request_buf.not_full, &request_buf.lock);
+		}
+
+		// Store information for request
+		request *req = &request_buf.buffer[request_buf.count];
+		req->fd = fd;
+		req->filesize = sbuf.st_size;
+		strcpy(req->filename, filename);
+		request_buf.count++;
+
+		pthread_cond_signal(&request_buf.not_empty);
+		pthread_mutex_unlock(&request_buf.lock);
 
     } else {
 		request_error(fd, filename, "501", "Not Implemented", "server does not serve dynamic content request");
