@@ -1,11 +1,13 @@
 #include "io_helper.h"
 #include "request.h"
 #include <pthread.h>
+#include <stdlib.h>
 
 #define MAXBUF (8192)
-#define BUFFER_SIZE DEFAULT_BUFFER_SIZE
-#define INITIAL_POLICY DEFAULT_SCHED_ALGO
 
+int num_threads = DEFAULT_THREADS;
+int buffer_max_size = DEFAULT_BUFFER_SIZE;
+int scheduling_algo = DEFAULT_SCHED_ALGO;
 
 //
 //	TODO: add code to create and manage the buffer
@@ -18,18 +20,9 @@ typedef struct {
 	char filename[MAXBUF];
 } request;
 
-// Set schedule names to their numbers
-typedef enum {
-	FIFO = 0,
-	SFF = 1,
-	RANDOM = 2
-} sched_policy;
-
-sched_policy current_policy;
-
 // Make a structure for request buffers
 typedef struct {
-	request buffer[BUFFER_SIZE];
+	request buffer[DEFAULT_BUFFER_SIZE];
 	int count;
 	pthread_mutex_t lock;
 	pthread_cond_t not_empty;
@@ -40,7 +33,6 @@ request_buffer request_buf;
 
 // Initialize the buffer
 void buffer_init() {
-                current_policy = (sched_policy)INITIAL_POLICY;
                 request_buf.count = 0;
                 pthread_mutex_init(&request_buf.lock, NULL);
                 pthread_cond_init(&request_buf.not_empty, NULL);
@@ -183,36 +175,52 @@ void* thread_request_serve_static(void* arg)
             	pthread_mutex_lock(&request_buf.lock);
             	// Wait if the buffer is empty
             	while (request_buf.count == 0) {
+			printf("Buffer count is 0, waiting on another thread");
                     	pthread_cond_wait(&request_buf.not_empty, &request_buf.lock);
             	}
+
+		while (request_buf.count < num_threads) {
+			pthread_mutex_unlock(&request_buf.lock);
+			usleep(1000);
+			pthread_mutex_lock(&request_buf.lock);
+		}
 
             	// This will handle FIFO since it will go in order
             	int idx = 0;
 
             	// Handle the SFF algorithm (smallest file first)
-            	if (current_policy == SFF) {
-                    	int min_size = request_buf.buffer[0].filesize;
+            	if (scheduling_algo == 1) {
+                    	printf("Got to the if statement");
+			int min_size = request_buf.buffer[0].filesize;
                     	for (int i = 1; i < request_buf.count; i++) {
+				printf("Got to the for statement");
                             	if (request_buf.buffer[i].filesize < min_size) {
                                     	min_size = request_buf.buffer[i].filesize;
-                                    	idx = i;
+                                    	printf("min_size = %d bytes\n", min_size);
+					idx = i;
                             	}
                     	}
             	// Handle the random algorithm (picking a random request)
-            	} else if (current_policy == RANDOM) {
+            	} else if (scheduling_algo == 2) {
+			if (request_buf.count <= 0) {
+				continue;
+			}
                     	idx = rand() % request_buf.count;
-            	}
-
+         	}
             	// Handle request
             	request req = request_buf.buffer[idx];
             	for (int i = idx; i < request_buf.count - 1; i++) {
                     	request_buf.buffer[i] = request_buf.buffer[i + 1];
             	}
             	request_buf.count--;
+		num_threads--;
+		printf("Request is handled. Subtracting from request_buf count. It is now %d\n", request_buf.count);
 
             	// Signal if blocked
             	pthread_cond_signal(&request_buf.not_full);
             	pthread_mutex_unlock(&request_buf.lock);
+
+		printf("Thread %ld serving: %s (%d bytes)\n", pthread_self(), req.filename, req.filesize);
 
             	// Write response then close
             	request_serve_static(req.fd, req.filename, req.filesize);
@@ -262,7 +270,7 @@ void request_handle(int fd) {
 		pthread_mutex_lock(&request_buf.lock);
 
 		// Wait if the buffer is full
-		while (request_buf.count == BUFFER_SIZE) {
+		while (request_buf.count == DEFAULT_BUFFER_SIZE) {
 			pthread_cond_wait(&request_buf.not_full, &request_buf.lock);
 		}
 
@@ -272,6 +280,7 @@ void request_handle(int fd) {
 		req->filesize = sbuf.st_size;
 		strcpy(req->filename, filename);
 		request_buf.count++;
+		printf("Adding to request_buf count. It is now %d\n", request_buf.count);
 
 		pthread_cond_signal(&request_buf.not_empty);
 		pthread_mutex_unlock(&request_buf.lock);
