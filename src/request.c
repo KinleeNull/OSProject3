@@ -175,6 +175,49 @@ void* thread_request_serve_static(void* arg)
 {
 
 	// TODO: write code to actualy respond to HTTP requests
+	// Initialize buffer only once with the first thread
+    	static pthread_once_t once = PTHREAD_ONCE_INIT;
+    	pthread_once(&once, buffer_init);
+
+    	while (1) {
+            	pthread_mutex_lock(&request_buf.lock);
+            	// Wait if the buffer is empty
+            	while (request_buf.count == 0) {
+                    	pthread_cond_wait(&request_buf.not_empty, &request_buf.lock);
+            	}
+
+            	// This will handle FIFO since it will go in order
+            	int idx = 0;
+
+            	// Handle the SFF algorithm (smallest file first)
+            	if (current_policy == SFF) {
+                    	int min_size = request_buf.buffer[0].filesize;
+                    	for (int i = 1; i < request_buf.count; i++) {
+                            	if (request_buf.buffer[i].filesize < min_size) {
+                                    	min_size = request_buf.buffer[i].filesize;
+                                    	idx = i;
+                            	}
+                    	}
+            	// Handle the random algorithm (picking a random request)
+            	} else if (current_policy == RANDOM) {
+                    	idx = rand() % request_buf.count;
+            	}
+
+            	// Handle request
+            	request req = request_buf.buffer[idx];
+            	for (int i = idx; i < request_buf.count - 1; i++) {
+                    	request_buf.buffer[i] = request_buf.buffer[i + 1];
+            	}
+            	request_buf.count--;
+
+            	// Signal if blocked
+            	pthread_cond_signal(&request_buf.not_full);
+            	pthread_mutex_unlock(&request_buf.lock);
+
+            	// Write response then close
+            	request_serve_static(req.fd, req.filename, req.filesize);
+            	close_or_die(req.fd);
+    	}
 }
 
 //
