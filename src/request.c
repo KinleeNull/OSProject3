@@ -9,10 +9,6 @@ int num_threads = DEFAULT_THREADS;
 int buffer_max_size = DEFAULT_BUFFER_SIZE;
 int scheduling_algo = DEFAULT_SCHED_ALGO;
 
-//
-//	TODO: add code to create and manage the buffer
-//
-
 // Make a structure for the requests
 typedef struct {
 	int fd;
@@ -20,7 +16,7 @@ typedef struct {
 	char filename[MAXBUF];
 } request;
 
-// Make a structure for request buffers
+// Make a structure for request buffer
 typedef struct {
 	request buffer[DEFAULT_BUFFER_SIZE];
 	int count;
@@ -165,21 +161,20 @@ void request_serve_static(int fd, char *filename, int filesize) {
 //
 void* thread_request_serve_static(void* arg)
 {
-
-	// TODO: write code to actualy respond to HTTP requests
 	// Initialize buffer only once with the first thread
     	static pthread_once_t once = PTHREAD_ONCE_INIT;
     	pthread_once(&once, buffer_init);
 
+	int thread_count = num_threads;
     	while (1) {
             	pthread_mutex_lock(&request_buf.lock);
             	// Wait if the buffer is empty
             	while (request_buf.count == 0) {
-			printf("Buffer count is 0, waiting on another thread");
                     	pthread_cond_wait(&request_buf.not_empty, &request_buf.lock);
             	}
-
-		while (request_buf.count < num_threads) {
+		
+		// Wait until all threads are there to order properly
+		while (request_buf.count < thread_count) {
 			pthread_mutex_unlock(&request_buf.lock);
 			usleep(1000);
 			pthread_mutex_lock(&request_buf.lock);
@@ -190,10 +185,8 @@ void* thread_request_serve_static(void* arg)
 
             	// Handle the SFF algorithm (smallest file first)
             	if (scheduling_algo == 1) {
-                    	printf("Got to the if statement");
 			int min_size = request_buf.buffer[0].filesize;
                     	for (int i = 1; i < request_buf.count; i++) {
-				printf("Got to the for statement");
                             	if (request_buf.buffer[i].filesize < min_size) {
                                     	min_size = request_buf.buffer[i].filesize;
                                     	printf("min_size = %d bytes\n", min_size);
@@ -203,24 +196,22 @@ void* thread_request_serve_static(void* arg)
             	// Handle the random algorithm (picking a random request)
             	} else if (scheduling_algo == 2) {
 			if (request_buf.count <= 0) {
+				pthread_mutex_unlock(&request_buf.lock);
 				continue;
 			}
                     	idx = rand() % request_buf.count;
          	}
-            	// Handle request
+            	// Handle request and remove from buffer
             	request req = request_buf.buffer[idx];
             	for (int i = idx; i < request_buf.count - 1; i++) {
                     	request_buf.buffer[i] = request_buf.buffer[i + 1];
             	}
             	request_buf.count--;
-		num_threads--;
-		printf("Request is handled. Subtracting from request_buf count. It is now %d\n", request_buf.count);
-
+		thread_count--;
+		
             	// Signal if blocked
             	pthread_cond_signal(&request_buf.not_full);
             	pthread_mutex_unlock(&request_buf.lock);
-
-		printf("Thread %ld serving: %s (%d bytes)\n", pthread_self(), req.filename, req.filesize);
 
             	// Write response then close
             	request_serve_static(req.fd, req.filename, req.filesize);
@@ -264,8 +255,6 @@ void request_handle(int fd) {
 			request_error(fd, filename, "403", "Forbidden", "server could not read this file");
 			return;
 		}
-		
-		// TODO: write code to add HTTP requests in the buffer based on the scheduling policy
 
 		pthread_mutex_lock(&request_buf.lock);
 
@@ -280,7 +269,6 @@ void request_handle(int fd) {
 		req->filesize = sbuf.st_size;
 		strcpy(req->filename, filename);
 		request_buf.count++;
-		printf("Adding to request_buf count. It is now %d\n", request_buf.count);
 
 		pthread_cond_signal(&request_buf.not_empty);
 		pthread_mutex_unlock(&request_buf.lock);
